@@ -130,7 +130,7 @@ struct Sector slurpFromFile(char *input) {
         return result;
       }
 
-			printf("%d walls\n", result.nWalls);
+      printf("%d walls\n", result.nWalls);
       result.walls = malloc(sizeof(struct Wall) * result.nWalls);
 
       state = WALLDEF;
@@ -221,22 +221,60 @@ struct iQueue *initQueue(int input) {
 
   return result;
 }
+
+float Vector2CrossProduct(Vector2 a, Vector2 b) {
+  return (a.x * b.y) - (a.y * b.x);
+}
+
 int triangleHasPointInside(int a, int b, int c, struct Triangle tempTriangle,
                            struct iQueue *walliQueue, struct Sector *input) {
   struct iNode *currentNode = walliQueue->front;
   Vector2 currentPoint;
+  Vector2 aPoint, bPoint, cPoint, pPoint;
+  Vector2 ab, bc, ca;
+  Vector2 ap, bp, cp;
+  float cross1, cross2, cross3;
+  // get the three points of the triangle
+  aPoint = (Vector2){input->walls[a].x1, input->walls[a].z1};
+  bPoint = (Vector2){input->walls[b].x1, input->walls[b].z1};
+  cPoint = (Vector2){input->walls[c].x1, input->walls[c].z1};
+  ab = Vector2Subtract(bPoint, aPoint);
+  bc = Vector2Subtract(cPoint, bPoint);
+  ca = Vector2Subtract(aPoint, cPoint);
+
   do {
     if (!((currentNode->n == a) || (currentNode->n == b) ||
           (currentNode->n == c))) {
-      currentPoint = (Vector2){input->walls[currentNode->n].x1,
-                               input->walls[currentNode->n].z1};
-      if (CheckCollisionPointTriangle(currentPoint, tempTriangle.a,
-                                      tempTriangle.b, tempTriangle.c)) {
-        printf("there was a point in the proposed triangle\n");
+      pPoint = (Vector2){input->walls[currentNode->n].x1,
+                         input->walls[currentNode->n].z1};
+      printf("checking %.0f, %.0f against %d %d %d.\n", pPoint.x, pPoint.y,
+             a + 1, b + 1, c + 1);
+      // if the point we're checking occupies the exact same space as one of ab
+      // or c, ignore it
+      // I could've wrapped this into the above if statement but
+      // it would be too long
+      if ((pPoint.x == aPoint.x && pPoint.y == aPoint.y) ||
+          (pPoint.x == bPoint.x && pPoint.y == bPoint.y) ||
+          (pPoint.x == cPoint.x && pPoint.y == cPoint.y)) {
+        printf("point %d occupies the same space as a corner, ignoring\n",
+               currentNode->n + 1);
+        currentNode = currentNode->next;
+				continue;
+      }
+      ap = Vector2Subtract(pPoint, aPoint);
+      bp = Vector2Subtract(pPoint, bPoint);
+      cp = Vector2Subtract(pPoint, cPoint);
+      cross1 = Vector2CrossProduct(ab, ap);
+      cross2 = Vector2CrossProduct(bc, bp);
+      cross3 = Vector2CrossProduct(ca, cp);
+
+      if (!(cross1 > 0.0f || cross2 > 0.0f || cross3 > 0.0f)) {
+        //printf("cross1: %.0f cross2: %.0f cross3: %.0f\n", cross1, cross2,
+        //       cross3);
+        printf("point %d in the proposed triangle of %d %d and %d\n",
+               currentNode->n + 1, a + 1, b + 1, c + 1);
         return 1;
       }
-    } else {
-      printf("skipping node %d\n", currentNode->n);
     }
     currentNode = currentNode->next;
   } while (currentNode != walliQueue->front);
@@ -252,9 +290,6 @@ void triangulate(struct Sector *input) {
   struct iQueue *walliQueue = initQueue(input->nWalls);
   input->triangles = malloc(sizeof(struct Triangle) * input->nfloorTris);
   struct iNode *currentNode = walliQueue->front;
-  do {
-    currentNode = currentNode->next;
-  } while (currentNode != walliQueue->back);
   currentNode = currentNode->next;
   while (walliQueue->members > 3) {
     // wow what a mess of pointers!
@@ -267,26 +302,30 @@ void triangulate(struct Sector *input) {
     nextPoint = (Vector2){input->walls[currentNode->next->n].x1,
                           input->walls[currentNode->next->n].z1};
 
-    currentToPrev = Vector2Subtract(previousPoint, currentPoint);
-    currentToNext = Vector2Subtract(nextPoint, currentPoint);
-    if ((currentToPrev.x * currentToNext.y) -
-            (currentToPrev.y * currentToNext.x) <
-        0.0f) {
-      printf("%d %d %d formed an obtuse angle, moving on\n",
-             currentNode->previous->n, currentNode->n, currentNode->next->n);
+    currentToPrev = Vector2Subtract(currentPoint, previousPoint);
+    currentToNext = Vector2Subtract(currentPoint, nextPoint);
+    if (Vector2CrossProduct(currentToPrev, currentToNext) < 0.0f) {
+      printf("%d %d %d formed an angle too big, moving on\n",
+             currentNode->previous->n + 1, currentNode->n + 1,
+             currentNode->next->n + 1);
     } else {
-      // TODO put point-inside-triangle check here
       tempTriangle = (struct Triangle){currentPoint, previousPoint, nextPoint};
       if (!triangleHasPointInside(currentNode->n, currentNode->next->n,
                                   currentNode->previous->n, tempTriangle,
                                   walliQueue, input)) {
         input->triangles[j++] = tempTriangle;
+        printf("%d %d %d accepted into list\n", currentNode->previous->n + 1,
+               currentNode->n + 1, currentNode->next->n + 1);
         removeiNode(walliQueue, currentNode->n);
         currentNode = walliQueue->front;
-				continue;
+        continue;
       }
     }
     currentNode = currentNode->next;
+    if (currentNode == walliQueue->front) {
+      printf("Made a whole loop of all points without clipping an ear...\n");
+      return;
+    }
   }
   currentPoint = (Vector2){input->walls[currentNode->n].x1,
                            input->walls[currentNode->n].z1};
