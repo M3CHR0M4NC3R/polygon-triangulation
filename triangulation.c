@@ -267,27 +267,24 @@ void addBridgesToSector(struct Sector *input, int nHoles) {
     input->nWalls++;
   }
 }
-
-struct Sector *splitSector(struct Sector *input) {
-  int i, j, k;
-  int wallIdx;
+struct Sector *splitWork(struct Sector *input) {
+  int i, j, k, wallIdx;
   bool *checkList = calloc(input->nWalls, sizeof(bool));
   struct Sector *result = malloc(sizeof(struct Sector) * 2);
   // deliberately over-allocate the walls for the splits
   // this doesn't matter because it gets freed after
   result[0].walls = malloc(sizeof(struct Wall) * input->nWalls);
   result[1].walls = malloc(sizeof(struct Wall) * input->nWalls);
-  // get an index of where the bridges start
   for (i = 0; i < input->nWalls; i++) {
-    if (input->walls[i].type == INTERIOR)
-      reverseWall(&input->walls[i]);
-  }
-  // outer loop, do this work twice
+		if(input->walls[i].type == INTERIOR)
+			reverseWall(&input->walls[i]);
+	}
   for (i = 0; i < 2; i++) {
     for (j = 0; j < input->nWalls; j++) {
       if (checkList[j])
         continue;
       result[i].walls[0] = input->walls[j];
+      printf("starting with wall %d split %d\n", j, i);
       checkList[j] = true;
       break;
     }
@@ -313,6 +310,37 @@ struct Sector *splitSector(struct Sector *input) {
     result[i].nWalls = wallIdx + 1;
   }
   free(checkList);
+
+  return result;
+}
+
+float edgeSum(struct Sector *input){
+	int i;
+	float sum = 0;
+	for (i=0;i<input->nWalls;i++){
+		sum+=((input->walls[i].x2 - input->walls[i].x1)*(input->walls[i].z2 + input->walls[i].z1));
+	}
+	return sum;
+}
+
+struct Sector *splitSector(struct Sector *input) {
+  int i, j, k;
+  int wallIdx;
+	struct Sector *result = splitWork(input);
+	//TODO find a better heuristic for determining if splits are malformed
+	printf("Curve for split 0: %.0f\n",edgeSum(&result[0]));
+	printf("Curve for split 1: %.0f\n",edgeSum(&result[1]));
+  //if (edgeSum(&result[0])!=edgeSum(&result[1])) {
+  //  printf("splits were done incorrectly: %d, needed %d. Reversing interiors\n",result[0].nWalls + result[1].nWalls, input->nWalls);
+  //  for (i = 0; i < input->nWalls; i++) {
+  //    if (input->walls[i].type == INTERIOR)
+  //      reverseWall(&input->walls[i]);
+  //  }
+	//	free(result[0].walls);
+	//	free(result[1].walls);
+	//	free(result);
+	//	result = splitWork(input);
+  //}
   return result;
 }
 
@@ -438,14 +466,14 @@ struct Sector slurpFromFile(char *input) {
     // triangles, not the extra walls
     // TODO uncomment the below line to prevent polluting the sector with
     // extra walls
-    // resultForSplit = result;
+    int oldNWalls = result.nWalls;
     addBridgesToSector(&result, nHoles);
     result.nfloorTris = 0;
     splits = splitSector(&result);
     splits[0].nfloorTris = 0;
     splits[1].nfloorTris = 0;
-     triangulate(&splits[0]);
-     triangulate(&splits[1]);
+    triangulate(&splits[0]);
+    triangulate(&splits[1]);
     result.nfloorTris = splits[0].nfloorTris + splits[1].nfloorTris;
     result.triangles = malloc(sizeof(struct Triangle) * result.nfloorTris);
     for (i = 0; i < splits[0].nfloorTris; i++) {
@@ -454,13 +482,15 @@ struct Sector slurpFromFile(char *input) {
     for (j = 0; j < splits[1].nfloorTris; j++) {
       result.triangles[j + i] = splits[1].triangles[j];
     }
-    // free(splits[0].walls);
-    // free(splits[1].walls);
-    // if (splits[0].nfloorTris > 0)
-    //   free(splits[0].triangles);
-    // if (splits[1].nfloorTris > 0)
-    //   free(splits[1].triangles);
-    // free(splits);
+    result.nWalls = oldNWalls;
+    result.walls = realloc(result.walls, sizeof(struct Wall) * oldNWalls);
+    free(splits[0].walls);
+    free(splits[1].walls);
+    if (splits[0].nfloorTris > 0)
+      free(splits[0].triangles);
+    if (splits[1].nfloorTris > 0)
+      free(splits[1].triangles);
+    free(splits);
   } else {
     triangulate(&result);
   }
@@ -501,8 +531,6 @@ int triangleHasPointInside(int a, int b, int c, struct Triangle tempTriangle,
       if ((pPoint.x == aPoint.x && pPoint.y == aPoint.y) ||
           (pPoint.x == bPoint.x && pPoint.y == bPoint.y) ||
           (pPoint.x == cPoint.x && pPoint.y == cPoint.y)) {
-        printf("point %d occupies the same space as a corner, ignoring\n",
-               i + 1);
         continue;
       }
       ap = Vector2Subtract(pPoint, aPoint);
@@ -513,10 +541,6 @@ int triangleHasPointInside(int a, int b, int c, struct Triangle tempTriangle,
       cross3 = Vector2CrossProduct(ca, cp);
 
       if (!(cross1 > 0.0f || cross2 > 0.0f || cross3 > 0.0f)) {
-        // printf("cross1: %.0f cross2: %.0f cross3: %.0f\n", cross1, cross2,
-        //        cross3);
-        printf("point %d in the proposed triangle of %d %d and %d\n", i + 1,
-               a + 1, b + 1, c + 1);
         return 1;
       }
     }
@@ -584,7 +608,6 @@ void triangulate(struct Sector *input) {
   int currentWall = 0;
   int remainingWalls = input->nWalls;
   int previousWall, nextWall;
-  printf("triangulating shape of %d points.\n", input->nWalls);
   while (remainingWalls > 3) {
     if (currentWall >= input->nWalls)
       currentWall = 0;
@@ -624,8 +647,6 @@ void triangulate(struct Sector *input) {
       if (!triangleHasPointInside(currentWall, nextWall, previousWall,
                                   tempTriangle, checkList, input)) {
         input->triangles[j++] = tempTriangle;
-        printf("accepted triangle %d %d %d into list\n", previousWall,
-               currentWall, nextWall);
         checkList[currentWall] = 1;
         remainingWalls--;
         currentWall = 0;
@@ -708,7 +729,10 @@ int main(int argc, char **argv) {
     EndDrawing();
   }
   CloseWindow(); // Close window and OpenGL context
+  printf("%d walls freeing on closure\n", sector1.nWalls);
   free(sector1.walls);
+  printf("%d tris freeing on closure\n", sector1.nfloorTris);
+  free(sector1.triangles);
 
   return 0;
 }
