@@ -16,49 +16,6 @@ struct Triangle {
   Vector2 c;
 };
 
-// this and the above struct are just so I can center the resulting graphic on
-// the window
-void DrawStructTriangle(struct Triangle input) {
-  struct Triangle temp = input;
-  temp.a.x += screenWidth / 2.0;
-  temp.a.y += screenHeight / 2.0;
-
-  temp.b.x += screenWidth / 2.0;
-  temp.b.y += screenHeight / 2.0;
-
-  temp.c.x += screenWidth / 2.0;
-  temp.c.y += screenHeight / 2.0;
-  DrawTriangleLines(temp.a, temp.b, temp.c, BLACK);
-}
-
-void drawTriangleCentered(struct Triangle input) {
-  struct Triangle temp = input;
-  temp.a = Vector2Scale(temp.a, 80.0);
-  temp.b = Vector2Scale(temp.b, 80.0);
-  temp.c = Vector2Scale(temp.c, 80.0);
-  temp.a = Vector2Add(temp.a, (Vector2){screenWidth / 4.0, 0});
-  temp.b = Vector2Add(temp.b, (Vector2){screenWidth / 4.0, 0});
-  temp.c = Vector2Add(temp.c, (Vector2){screenWidth / 4.0, 0});
-  DrawTriangle(temp.a, temp.b, temp.c, BLUE);
-  DrawTriangleLines(temp.a, temp.b, temp.c, BLACK);
-  return;
-}
-void drawVectorCentered(Vector2 start, Vector2 end, int linenum) {
-  int textX, textY;
-  Vector2 a = start;
-  Vector2 b = end;
-  a = Vector2Scale(a, 80.0);
-  b = Vector2Scale(b, 80.0);
-  a = Vector2Add(a, (Vector2){screenWidth / 4.0, 0});
-  b = Vector2Add(b, (Vector2){screenWidth / 4.0, 0});
-  // textX = (a.x + (b.x * .90)) / 2;
-  // textY = (a.y + b.y) / 2;
-  textX = ((a.x + b.x)) / 2;
-  textY = ((a.y + b.y)) / 2;
-  DrawLine(a.x, a.y, b.x, b.y, GRUVBOX_BLUE);
-  DrawText(TextFormat("%d", linenum), textX, textY, 12, GRUVBOX_TEXT);
-}
-
 enum WallType { PERIMETER, INTERIOR, BRIDGE };
 // wall struct from dungeon-shooter
 struct Wall {
@@ -86,18 +43,33 @@ struct Sector {
 };
 void triangulate(struct Sector *input);
 
-void drawSectorOutline(struct Sector input) {
+void drawSectorOutline(struct Sector input, Vector2 center,
+                       Vector2 shapeCenter) {
   int i;
-  for (i = 0; i < input.nWalls; i++)
-    drawVectorCentered((Vector2){input.walls[i].x1, input.walls[i].z1},
-                       (Vector2){input.walls[i].x2, input.walls[i].z2}, i);
+  int textX, textY;
+  Vector2 a;
+  Vector2 b;
+  for (i = 0; i < input.nWalls; i++) {
+    a = (Vector2){input.walls[i].x1, input.walls[i].z1};
+    b = (Vector2){input.walls[i].x2, input.walls[i].z2};
+    // textX = (a.x + (b.x * .90)) / 2;
+    // textY = (a.y + b.y) / 2;
+    textX = ((a.x + b.x)) / 2;
+    textY = ((a.y + b.y)) / 2;
+    DrawLine(a.x, a.y, b.x, b.y, GRUVBOX_BLUE);
+    DrawText(TextFormat("%d", i), textX, textY, 12, GRUVBOX_TEXT);
+  }
   return;
 }
 
-void drawSectorTris(struct Sector input) {
+void drawSectorTris(struct Sector input, Vector2 screenCenter,
+                    Vector2 shapeCenter) {
   int i;
   for (i = 0; i < input.nfloorTris; i++) {
-    drawTriangleCentered(input.triangles[i]);
+    DrawTriangle(input.triangles[i].a, input.triangles[i].b,
+                 input.triangles[i].c, BLUE);
+    DrawTriangleLines(input.triangles[i].a, input.triangles[i].b,
+                      input.triangles[i].c, BLACK);
   }
   return;
 }
@@ -692,6 +664,66 @@ void triangulate(struct Sector *input) {
                     "before exiting.\n This will lead to a memory leak.");
   return;
 }
+// because 0 y is the top of the screen, shapes willl render upside down without
+// this
+void flipShape(struct Sector *input) {
+  int i;
+  float highestPoint = input->walls[0].z1;
+  Vector2 temp;
+  for (i = 0; i < input->nWalls; i++) {
+    if (input->walls[i].z1 > highestPoint)
+      highestPoint = input->walls[i].z1;
+  }
+  for (i = 0; i < input->nWalls; i++) {
+    input->walls[i].z1 *= -1;
+    input->walls[i].z1 += highestPoint;
+    input->walls[i].z2 *= -1;
+    input->walls[i].z2 += highestPoint;
+  }
+  for (i = 0; i < input->nfloorTris; i++) {
+    input->triangles[i].a.y *= -1;
+    input->triangles[i].a.y += highestPoint;
+    input->triangles[i].b.y *= -1;
+    input->triangles[i].b.y += highestPoint;
+    input->triangles[i].c.y *= -1;
+    input->triangles[i].c.y += highestPoint;
+    temp = input->triangles[i].a;
+    input->triangles[i].a = input->triangles[i].b;
+    input->triangles[i].b = temp;
+  }
+}
+
+// shifts, and scales the shape to fit better on the screen
+void offsetShape(struct Sector *input, Vector2 center, Vector2 shapeCenter) {
+  int i;
+  for (i = 0; i < input->nfloorTris; i++) {
+    input->triangles[i].a = Vector2Subtract(input->triangles[i].a, shapeCenter);
+    input->triangles[i].b = Vector2Subtract(input->triangles[i].b, shapeCenter);
+    input->triangles[i].c = Vector2Subtract(input->triangles[i].c, shapeCenter);
+    input->triangles[i].a = Vector2Scale(input->triangles[i].a, 80.0);
+    input->triangles[i].b = Vector2Scale(input->triangles[i].b, 80.0);
+    input->triangles[i].c = Vector2Scale(input->triangles[i].c, 80.0);
+    input->triangles[i].a = Vector2Add(input->triangles[i].a, center);
+    input->triangles[i].b = Vector2Add(input->triangles[i].b, center);
+    input->triangles[i].c = Vector2Add(input->triangles[i].c, center);
+  }
+  for (i = 0; i < input->nWalls; i++) {
+    input->walls[i].x1 -= shapeCenter.x;
+    input->walls[i].x2 -= shapeCenter.x;
+    input->walls[i].z1 -= shapeCenter.y;
+    input->walls[i].z2 -= shapeCenter.y;
+
+    input->walls[i].x1 *= 80.0;
+    input->walls[i].x2 *= 80.0;
+    input->walls[i].z1 *= 80.0;
+    input->walls[i].z2 *= 80.0;
+
+    input->walls[i].x1 += center.x;
+    input->walls[i].x2 += center.x;
+    input->walls[i].z1 += center.y;
+    input->walls[i].z2 += center.y;
+  }
+}
 
 // you can give this a txt file with a list of walls, it will sort them and
 // display the polygon they form divided into triangles
@@ -713,6 +745,12 @@ int main(int argc, char **argv) {
              "raylib [polygon triangulation] example - ear clipping");
   SetTargetFPS(60);
   struct Sector sector1 = slurpFromFile(argv[1]);
+  int screenX = GetRenderWidth();
+  int screenY = GetRenderHeight();
+  flipShape(&sector1);
+  Vector2 screenCenter = (Vector2){screenX / 2.0, screenY / 2.0};
+  Vector2 shapeCenter = getSectorCenter(&sector1);
+  offsetShape(&sector1, screenCenter, shapeCenter);
 
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
@@ -722,8 +760,13 @@ int main(int argc, char **argv) {
 
     DrawText("triangulation example", 20, 20, 20, GRUVBOX_TEXT);
 
-    drawSectorTris(sector1);
-    drawSectorOutline(sector1);
+    if (IsWindowResized()) {
+      screenX = GetRenderWidth();
+      screenY = GetRenderHeight();
+      screenCenter = (Vector2){screenX / 2.0, screenY / 2.0};
+    }
+    drawSectorTris(sector1, screenCenter, shapeCenter);
+    drawSectorOutline(sector1, screenCenter, shapeCenter);
 
     DrawLine(18, 42, screenWidth - 18, 42, BLACK);
     EndDrawing();
