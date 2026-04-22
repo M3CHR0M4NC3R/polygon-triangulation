@@ -31,26 +31,33 @@ void DrawStructTriangle(struct Triangle input) {
   DrawTriangleLines(temp.a, temp.b, temp.c, BLACK);
 }
 
-void drawTriangleCentered(struct Triangle input) {
+void drawTriangleCentered(struct Triangle input, Vector2 center,
+                          Vector2 shapeCenter) {
   struct Triangle temp = input;
+  temp.a = Vector2Subtract(temp.a, shapeCenter);
+  temp.b = Vector2Subtract(temp.b, shapeCenter);
+  temp.c = Vector2Subtract(temp.c, shapeCenter);
   temp.a = Vector2Scale(temp.a, 80.0);
   temp.b = Vector2Scale(temp.b, 80.0);
   temp.c = Vector2Scale(temp.c, 80.0);
-  temp.a = Vector2Add(temp.a, (Vector2){screenWidth / 4.0, 0});
-  temp.b = Vector2Add(temp.b, (Vector2){screenWidth / 4.0, 0});
-  temp.c = Vector2Add(temp.c, (Vector2){screenWidth / 4.0, 0});
+  temp.a = Vector2Add(temp.a, center);
+  temp.b = Vector2Add(temp.b, center);
+  temp.c = Vector2Add(temp.c, center);
   DrawTriangle(temp.a, temp.b, temp.c, BLUE);
   DrawTriangleLines(temp.a, temp.b, temp.c, BLACK);
   return;
 }
-void drawVectorCentered(Vector2 start, Vector2 end, int linenum) {
+void drawVectorCentered(Vector2 start, Vector2 end, int linenum, Vector2 center,
+                        Vector2 shapeCenter) {
   int textX, textY;
   Vector2 a = start;
   Vector2 b = end;
+  a = Vector2Subtract(a, shapeCenter);
+  b = Vector2Subtract(b, shapeCenter);
   a = Vector2Scale(a, 80.0);
   b = Vector2Scale(b, 80.0);
-  a = Vector2Add(a, (Vector2){screenWidth / 4.0, 0});
-  b = Vector2Add(b, (Vector2){screenWidth / 4.0, 0});
+  a = Vector2Add(a, center);
+  b = Vector2Add(b, center);
   // textX = (a.x + (b.x * .90)) / 2;
   // textY = (a.y + b.y) / 2;
   textX = ((a.x + b.x)) / 2;
@@ -86,18 +93,19 @@ struct Sector {
 };
 void triangulate(struct Sector *input);
 
-void drawSectorOutline(struct Sector input) {
+void drawSectorOutline(struct Sector input, Vector2 center, Vector2 shapeCenter) {
   int i;
   for (i = 0; i < input.nWalls; i++)
     drawVectorCentered((Vector2){input.walls[i].x1, input.walls[i].z1},
-                       (Vector2){input.walls[i].x2, input.walls[i].z2}, i);
+                       (Vector2){input.walls[i].x2, input.walls[i].z2}, i, center, shapeCenter);
   return;
 }
 
-void drawSectorTris(struct Sector input) {
+void drawSectorTris(struct Sector input, Vector2 screenCenter,
+                    Vector2 shapeCenter) {
   int i;
   for (i = 0; i < input.nfloorTris; i++) {
-    drawTriangleCentered(input.triangles[i]);
+    drawTriangleCentered(input.triangles[i], screenCenter, shapeCenter);
   }
   return;
 }
@@ -439,13 +447,14 @@ struct Sector slurpFromFile(char *input) {
     // TODO uncomment the below line to prevent polluting the sector with
     // extra walls
     // resultForSplit = result;
+    int originalNWalls = result.nWalls;
     addBridgesToSector(&result, nHoles);
     result.nfloorTris = 0;
     splits = splitSector(&result);
     splits[0].nfloorTris = 0;
     splits[1].nfloorTris = 0;
-     triangulate(&splits[0]);
-     triangulate(&splits[1]);
+    triangulate(&splits[0]);
+    triangulate(&splits[1]);
     result.nfloorTris = splits[0].nfloorTris + splits[1].nfloorTris;
     result.triangles = malloc(sizeof(struct Triangle) * result.nfloorTris);
     for (i = 0; i < splits[0].nfloorTris; i++) {
@@ -454,6 +463,8 @@ struct Sector slurpFromFile(char *input) {
     for (j = 0; j < splits[1].nfloorTris; j++) {
       result.triangles[j + i] = splits[1].triangles[j];
     }
+    result.nWalls = originalNWalls;
+    result.walls = realloc(result.walls, sizeof(struct Wall) * originalNWalls);
     // free(splits[0].walls);
     // free(splits[1].walls);
     // if (splits[0].nfloorTris > 0)
@@ -671,6 +682,34 @@ void triangulate(struct Sector *input) {
                     "before exiting.\n This will lead to a memory leak.");
   return;
 }
+// because 0 y is the top of the screen, shapes willl render upside down without
+// this
+void flipShape(struct Sector *input) {
+  int i;
+  float highestPoint = input->walls[0].z1;
+  Vector2 temp;
+  for (i = 0; i < input->nWalls; i++) {
+    if (input->walls[i].z1 > highestPoint)
+      highestPoint = input->walls[i].z1;
+  }
+  for (i = 0; i < input->nWalls; i++) {
+    input->walls[i].z1 *= -1;
+    input->walls[i].z1 += highestPoint;
+    input->walls[i].z2 *= -1;
+    input->walls[i].z2 += highestPoint;
+  }
+  for (i = 0; i < input->nfloorTris; i++) {
+    input->triangles[i].a.y *= -1;
+    input->triangles[i].a.y += highestPoint;
+    input->triangles[i].b.y *= -1;
+    input->triangles[i].b.y += highestPoint;
+    input->triangles[i].c.y *= -1;
+    input->triangles[i].c.y += highestPoint;
+    temp = input->triangles[i].a;
+    input->triangles[i].a = input->triangles[i].b;
+    input->triangles[i].b = temp;
+  }
+}
 
 // you can give this a txt file with a list of walls, it will sort them and
 // display the polygon they form divided into triangles
@@ -692,6 +731,11 @@ int main(int argc, char **argv) {
              "raylib [polygon triangulation] example - ear clipping");
   SetTargetFPS(60);
   struct Sector sector1 = slurpFromFile(argv[1]);
+  int screenX = GetRenderWidth();
+  int screenY = GetRenderHeight();
+  flipShape(&sector1);
+  Vector2 screenCenter = (Vector2){screenX / 2.0, screenY / 2.0};
+  Vector2 shapeCenter = getSectorCenter(&sector1);
 
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
@@ -701,8 +745,13 @@ int main(int argc, char **argv) {
 
     DrawText("triangulation example", 20, 20, 20, GRUVBOX_TEXT);
 
-    drawSectorTris(sector1);
-    drawSectorOutline(sector1);
+    if (IsWindowResized()) {
+      screenX = GetRenderWidth();
+      screenY = GetRenderHeight();
+      screenCenter = (Vector2){screenX / 2.0, screenY / 2.0};
+    }
+    drawSectorTris(sector1, screenCenter, shapeCenter);
+    drawSectorOutline(sector1, screenCenter, shapeCenter);
 
     DrawLine(18, 42, screenWidth - 18, 42, BLACK);
     EndDrawing();
