@@ -16,56 +16,6 @@ struct Triangle {
   Vector2 c;
 };
 
-// this and the above struct are just so I can center the resulting graphic on
-// the window
-void DrawStructTriangle(struct Triangle input) {
-  struct Triangle temp = input;
-  temp.a.x += screenWidth / 2.0;
-  temp.a.y += screenHeight / 2.0;
-
-  temp.b.x += screenWidth / 2.0;
-  temp.b.y += screenHeight / 2.0;
-
-  temp.c.x += screenWidth / 2.0;
-  temp.c.y += screenHeight / 2.0;
-  DrawTriangleLines(temp.a, temp.b, temp.c, BLACK);
-}
-
-void drawTriangleCentered(struct Triangle input, Vector2 center,
-                          Vector2 shapeCenter) {
-  struct Triangle temp = input;
-  temp.a = Vector2Subtract(temp.a, shapeCenter);
-  temp.b = Vector2Subtract(temp.b, shapeCenter);
-  temp.c = Vector2Subtract(temp.c, shapeCenter);
-  temp.a = Vector2Scale(temp.a, 80.0);
-  temp.b = Vector2Scale(temp.b, 80.0);
-  temp.c = Vector2Scale(temp.c, 80.0);
-  temp.a = Vector2Add(temp.a, center);
-  temp.b = Vector2Add(temp.b, center);
-  temp.c = Vector2Add(temp.c, center);
-  DrawTriangle(temp.a, temp.b, temp.c, BLUE);
-  DrawTriangleLines(temp.a, temp.b, temp.c, BLACK);
-  return;
-}
-void drawVectorCentered(Vector2 start, Vector2 end, int linenum, Vector2 center,
-                        Vector2 shapeCenter) {
-  int textX, textY;
-  Vector2 a = start;
-  Vector2 b = end;
-  a = Vector2Subtract(a, shapeCenter);
-  b = Vector2Subtract(b, shapeCenter);
-  a = Vector2Scale(a, 80.0);
-  b = Vector2Scale(b, 80.0);
-  a = Vector2Add(a, center);
-  b = Vector2Add(b, center);
-  // textX = (a.x + (b.x * .90)) / 2;
-  // textY = (a.y + b.y) / 2;
-  textX = ((a.x + b.x)) / 2;
-  textY = ((a.y + b.y)) / 2;
-  DrawLine(a.x, a.y, b.x, b.y, GRUVBOX_BLUE);
-  DrawText(TextFormat("%d", linenum), textX, textY, 12, GRUVBOX_TEXT);
-}
-
 enum WallType { PERIMETER, INTERIOR, BRIDGE };
 // wall struct from dungeon-shooter
 struct Wall {
@@ -93,11 +43,22 @@ struct Sector {
 };
 void triangulate(struct Sector *input);
 
-void drawSectorOutline(struct Sector input, Vector2 center, Vector2 shapeCenter) {
+void drawSectorOutline(struct Sector input, Vector2 center,
+                       Vector2 shapeCenter) {
   int i;
-  for (i = 0; i < input.nWalls; i++)
-    drawVectorCentered((Vector2){input.walls[i].x1, input.walls[i].z1},
-                       (Vector2){input.walls[i].x2, input.walls[i].z2}, i, center, shapeCenter);
+  int textX, textY;
+  Vector2 a;
+  Vector2 b;
+  for (i = 0; i < input.nWalls; i++) {
+    a = (Vector2){input.walls[i].x1, input.walls[i].z1};
+    b = (Vector2){input.walls[i].x2, input.walls[i].z2};
+    // textX = (a.x + (b.x * .90)) / 2;
+    // textY = (a.y + b.y) / 2;
+    textX = ((a.x + b.x)) / 2;
+    textY = ((a.y + b.y)) / 2;
+    DrawLine(a.x, a.y, b.x, b.y, GRUVBOX_BLUE);
+    DrawText(TextFormat("%d", i), textX, textY, 12, GRUVBOX_TEXT);
+  }
   return;
 }
 
@@ -105,7 +66,10 @@ void drawSectorTris(struct Sector input, Vector2 screenCenter,
                     Vector2 shapeCenter) {
   int i;
   for (i = 0; i < input.nfloorTris; i++) {
-    drawTriangleCentered(input.triangles[i], screenCenter, shapeCenter);
+    DrawTriangle(input.triangles[i].a, input.triangles[i].b,
+                 input.triangles[i].c, BLUE);
+    DrawTriangleLines(input.triangles[i].a, input.triangles[i].b,
+                      input.triangles[i].c, BLACK);
   }
   return;
 }
@@ -711,6 +675,38 @@ void flipShape(struct Sector *input) {
   }
 }
 
+// shifts, and scales the shape to fit better on the screen
+void offsetShape(struct Sector *input, Vector2 center, Vector2 shapeCenter) {
+  int i;
+  for (i = 0; i < input->nfloorTris; i++) {
+    input->triangles[i].a = Vector2Subtract(input->triangles[i].a, shapeCenter);
+    input->triangles[i].b = Vector2Subtract(input->triangles[i].b, shapeCenter);
+    input->triangles[i].c = Vector2Subtract(input->triangles[i].c, shapeCenter);
+    input->triangles[i].a = Vector2Scale(input->triangles[i].a, 80.0);
+    input->triangles[i].b = Vector2Scale(input->triangles[i].b, 80.0);
+    input->triangles[i].c = Vector2Scale(input->triangles[i].c, 80.0);
+    input->triangles[i].a = Vector2Add(input->triangles[i].a, center);
+    input->triangles[i].b = Vector2Add(input->triangles[i].b, center);
+    input->triangles[i].c = Vector2Add(input->triangles[i].c, center);
+  }
+  for (i = 0; i < input->nWalls; i++) {
+    input->walls[i].x1 -= shapeCenter.x;
+    input->walls[i].x2 -= shapeCenter.x;
+    input->walls[i].z1 -= shapeCenter.y;
+    input->walls[i].z2 -= shapeCenter.y;
+
+    input->walls[i].x1 *= 80.0;
+    input->walls[i].x2 *= 80.0;
+    input->walls[i].z1 *= 80.0;
+    input->walls[i].z2 *= 80.0;
+
+    input->walls[i].x1 += center.x;
+    input->walls[i].x2 += center.x;
+    input->walls[i].z1 += center.y;
+    input->walls[i].z2 += center.y;
+  }
+}
+
 // you can give this a txt file with a list of walls, it will sort them and
 // display the polygon they form divided into triangles
 int main(int argc, char **argv) {
@@ -736,6 +732,7 @@ int main(int argc, char **argv) {
   flipShape(&sector1);
   Vector2 screenCenter = (Vector2){screenX / 2.0, screenY / 2.0};
   Vector2 shapeCenter = getSectorCenter(&sector1);
+  offsetShape(&sector1, screenCenter, shapeCenter);
 
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
