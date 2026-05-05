@@ -23,8 +23,8 @@ struct Wall {
   // engine
   float x1, z1;
   float x2, z2;
-  Texture tx;
-  int solid;
+  Texture *tx;
+  bool solid;
   enum WallType type;
 };
 
@@ -32,11 +32,11 @@ struct Wall {
 struct Sector {
   float ceilingHt;
   float floorHt;
-  Texture ceilingTx;
-  Texture floorTx;
-  int nWalls;
+  Texture *ceilingTx;
+  Texture *floorTx;
+	short nWalls;
   struct Wall *walls;
-  int nHoles;
+  short nHoles;
   int *holeIndexes;
   int nfloorTris;
   struct Triangle *triangles;
@@ -239,6 +239,30 @@ void addBridgesToSector(struct Sector *input, int nHoles) {
     input->nWalls++;
   }
 }
+
+float edgeSum(struct Sector *input, int startIdx) {
+  int i;
+  float sum = 0;
+  for (i = startIdx; i < input->nWalls; i++) {
+    sum += ((input->walls[i].x2 - input->walls[i].x1) *
+            (input->walls[i].z2 + input->walls[i].z1));
+  }
+  return sum;
+}
+
+bool interiorClockwise(struct Sector *input) {
+  int i = 0;
+	float direction;
+  while (input->walls[i].type != INTERIOR)
+    i++;
+	direction = edgeSum(input,i);
+	if (direction>0){
+		printf("interior was clockwise\n");
+  	return true;
+	}
+	printf("interior was counter-clockwise\n");
+	return false;
+}
 struct Sector *splitWork(struct Sector *input) {
   int i, j, k, wallIdx;
   bool *checkList = calloc(input->nWalls, sizeof(bool));
@@ -247,10 +271,12 @@ struct Sector *splitWork(struct Sector *input) {
   // this doesn't matter because it gets freed after
   result[0].walls = malloc(sizeof(struct Wall) * input->nWalls);
   result[1].walls = malloc(sizeof(struct Wall) * input->nWalls);
-  for (i = 0; i < input->nWalls; i++) {
-		if(input->walls[i].type == INTERIOR)
-			reverseWall(&input->walls[i]);
-	}
+  if (!interiorClockwise(input)) {
+    for (i = 0; i < input->nWalls; i++) {
+      if (input->walls[i].type == INTERIOR)
+        reverseWall(&input->walls[i]);
+    }
+  }
   for (i = 0; i < 2; i++) {
     for (j = 0; j < input->nWalls; j++) {
       if (checkList[j])
@@ -276,43 +302,19 @@ struct Sector *splitWork(struct Sector *input) {
       }
       wallIdx++;
       result[i].walls[wallIdx] = input->walls[k];
-      printf("adding wall %d to split %d\n", k, i);
       checkList[k] = true;
     }
     result[i].nWalls = wallIdx + 1;
   }
   free(checkList);
-
   return result;
 }
 
-float edgeSum(struct Sector *input){
-	int i;
-	float sum = 0;
-	for (i=0;i<input->nWalls;i++){
-		sum+=((input->walls[i].x2 - input->walls[i].x1)*(input->walls[i].z2 + input->walls[i].z1));
-	}
-	return sum;
-}
 
 struct Sector *splitSector(struct Sector *input) {
   int i, j, k;
   int wallIdx;
-	struct Sector *result = splitWork(input);
-	//TODO find a better heuristic for determining if splits are malformed
-	printf("Curve for split 0: %.0f\n",edgeSum(&result[0]));
-	printf("Curve for split 1: %.0f\n",edgeSum(&result[1]));
-  //if (edgeSum(&result[0])!=edgeSum(&result[1])) {
-  //  printf("splits were done incorrectly: %d, needed %d. Reversing interiors\n",result[0].nWalls + result[1].nWalls, input->nWalls);
-  //  for (i = 0; i < input->nWalls; i++) {
-  //    if (input->walls[i].type == INTERIOR)
-  //      reverseWall(&input->walls[i]);
-  //  }
-	//	free(result[0].walls);
-	//	free(result[1].walls);
-	//	free(result);
-	//	result = splitWork(input);
-  //}
+  struct Sector *result = splitWork(input);
   return result;
 }
 
@@ -468,10 +470,6 @@ struct Sector slurpFromFile(char *input) {
   }
 
   return result;
-}
-
-float Vector2CrossProduct(Vector2 a, Vector2 b) {
-  return (a.x * b.y) - (a.y * b.x);
 }
 
 int triangleHasPointInside(int a, int b, int c, struct Triangle tempTriangle,
@@ -725,6 +723,34 @@ void offsetShape(struct Sector *input, Vector2 center, Vector2 shapeCenter) {
   }
 }
 
+ulong getSectorSize(struct Sector *input){
+	ulong size = 0;
+	size += sizeof(struct Sector);
+	size += sizeof(struct Wall) * input->nWalls;
+	size += sizeof(struct Triangle) * input->nfloorTris;
+
+	printf("Size of this Sector: %lu bytes\n",size);
+	return size;
+}
+
+struct Sector *alignSector(struct Sector *input){
+	int wallsOffset = sizeof(struct Sector);
+	int trisOffset = wallsOffset + sizeof(struct Wall) * input->nWalls;
+
+	struct Sector *result = malloc(getSectorSize(input));
+	memcpy(result,input,sizeof(struct Sector));
+
+	result->walls = (struct Wall*)((char *)result + wallsOffset);
+	memcpy(result->walls,input->walls,sizeof(struct Wall) * input->nWalls);
+
+	result->triangles = (struct Triangle*)((char *)result + trisOffset);
+	memcpy(result->triangles,input->triangles,sizeof(struct Triangle) * input->nfloorTris);
+
+	free(input->walls);
+	free(input->triangles);
+	return result;
+}
+
 // you can give this a txt file with a list of walls, it will sort them and
 // display the polygon they form divided into triangles
 int main(int argc, char **argv) {
@@ -751,6 +777,7 @@ int main(int argc, char **argv) {
   Vector2 screenCenter = (Vector2){screenX / 2.0, screenY / 2.0};
   Vector2 shapeCenter = getSectorCenter(&sector1);
   offsetShape(&sector1, screenCenter, shapeCenter);
+	struct Sector *alignedSector = alignSector(&sector1);
 
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
@@ -759,23 +786,16 @@ int main(int argc, char **argv) {
     ClearBackground(GRUVBOX_BACKGROUND);
 
     DrawText("triangulation example", 20, 20, 20, GRUVBOX_TEXT);
-
-    if (IsWindowResized()) {
-      screenX = GetRenderWidth();
-      screenY = GetRenderHeight();
-      screenCenter = (Vector2){screenX / 2.0, screenY / 2.0};
-    }
-    drawSectorTris(sector1, screenCenter, shapeCenter);
-    drawSectorOutline(sector1, screenCenter, shapeCenter);
+    drawSectorTris(*alignedSector, screenCenter, shapeCenter);
+    drawSectorOutline(*alignedSector, screenCenter, shapeCenter);
 
     DrawLine(18, 42, screenWidth - 18, 42, BLACK);
     EndDrawing();
   }
   CloseWindow(); // Close window and OpenGL context
-  printf("%d walls freeing on closure\n", sector1.nWalls);
-  free(sector1.walls);
-  printf("%d tris freeing on closure\n", sector1.nfloorTris);
-  free(sector1.triangles);
+  printf("%d walls freeing on closure\n", alignedSector->nWalls);
+  printf("%d tris freeing on closure\n", alignedSector->nfloorTris);
+	free(alignedSector);
 
   return 0;
 }
